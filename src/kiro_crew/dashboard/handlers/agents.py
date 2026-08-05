@@ -893,11 +893,11 @@ async def _pi_models_response(request: web.Request) -> web.Response:
             pi_models as _pi_models_merge,
         )
 
-        rows = await asyncio.get_running_loop().run_in_executor(
-            maintenance_executor(),
-            _pi_models_merge,
-            configured_default,
-        )
+        # ``pi_models`` is async because it awaits the ``pi list-models``
+        # subprocess. Awaiting it directly is fine — the subprocess is the
+        # only blocking operation, and the executor is for cases where the
+        # event loop would block on sync I/O.
+        rows = await _pi_models_merge(configured_default)
         return web.json_response(rows)
     except Exception:
         logger.warning("api_models (pi backend) failed; returning 503", exc_info=True)

@@ -20,20 +20,21 @@ from kiro_crew.dashboard.handlers import pi_models as real_pi_models_module
 
 
 def _stub_advertised(rows):
-    """Replace advertised_pi_models in BOTH import paths so the lazy import
-    inside pi_models() sees the stub."""
+    """Patch advertised_pi_models on the real runtime module.
+
+    ``pi_models()`` does ``import kiro_crew.dashboard.handlers.pi_models_runtime
+    as _rt_module`` inside the function body — that import re-fetches the
+    cached module object from ``sys.modules``, so patching the attribute
+    on the real module is sufficient (no need to replace the whole
+    module entry in ``sys.modules``).
+    """
+    async def _async_rows():
+        return rows
+
     return [
-        patch.dict(
-            sys.modules,
-            {
-                "kiro_crew.dashboard.handlers.pi_models_runtime": type(sys)(
-                    "pi_models_runtime_stub",
-                ),
-            },
-        ),
         patch(
             "kiro_crew.dashboard.handlers.pi_models_runtime.advertised_pi_models",
-            lambda: rows,
+            _async_rows,
             create=True,
         ),
     ]
@@ -56,7 +57,9 @@ def _stub_registry(rows):
 
 
 def _call_pi_models(advertised, registry_rows, configured_default=""):
-    """Invoke pi_models with stubs in place."""
+    """Invoke pi_models with stubs in place. ``pi_models`` is async (it
+    awaits the subprocess), so this helper runs the event loop too."""
+    import asyncio
     from contextlib import ExitStack
 
     with ExitStack() as stack:
@@ -64,7 +67,7 @@ def _call_pi_models(advertised, registry_rows, configured_default=""):
             stack.enter_context(ctx)
         for ctx in _stub_registry(registry_rows):
             stack.enter_context(ctx)
-        return real_pi_models_module.pi_models(configured_default)
+        return asyncio.run(real_pi_models_module.pi_models(configured_default))
 
 
 # ---------------------------------------------------------------------------

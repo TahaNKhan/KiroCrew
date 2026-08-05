@@ -89,7 +89,14 @@ async def _run_pi_list_models() -> list[dict]:
         # need SSH. The kiro-cli path uses it because it may invoke
         # agent-side tools that hit git+ssh. Keeping pi's environment
         # lean avoids the SSH-agent-discovery round trip per poll.
-        proc = await create_subprocess_limited(
+        # Use plain asyncio.create_subprocess_exec — NOT
+        # create_subprocess_limited. The spawn-shim that applies rlimits
+        # measurably slows down pi's Node bootstrap on this machine
+        # (15s+ vs 8s without the shim) and pi list-models is a
+        # read-only one-shot CLI that doesn't need the cgroup/rlimit
+        # envelope. The kiro-cli path uses the shim because it spawns
+        # MCP servers + tool subprocesses that need it.
+        proc = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
