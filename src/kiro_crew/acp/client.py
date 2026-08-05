@@ -1828,16 +1828,14 @@ class AcpClient:
             # location/diff metadata). Resolution order:
             #   1. PI_ACP_SERVER_BIN env var (explicit override)
             #   2. `pi-acp` on PATH (the canonical binary from the npm package)
-            # The local `packages/pi-acp-server/` shim from phase-01 is no
-            # longer used — it was a placeholder until upstream `pi-acp` was
-            # discovered. Mirrors the dormant claude seam (see _spawn
-            # docstring) but is intentionally simpler — no native binary
-            # lookup, no settings seed.
+            # The homegrown packages/pi-acp-server/ shim from phase-01 was a
+            # placeholder before upstream was discovered and has been
+            # deleted; this branch only knows about pi-acp. Mirrors the
+            # dormant claude seam (see _spawn docstring) but is intentionally
+            # simpler — no native binary lookup, no settings seed.
             pi_bin = os.environ.get("PI_ACP_SERVER_BIN")
             if not pi_bin:
-                pi_bin = shutil.which("pi-acp") or shutil.which(
-                    "packages/pi-acp-server/bin/pi-acp-server"
-                )
+                pi_bin = shutil.which("pi-acp")
             if not pi_bin:
                 raise AcpError(
                     "pi-acp not found. Install it with `npm i -g pi-acp` "
@@ -1951,7 +1949,7 @@ class AcpClient:
         _spawn_label = (
             (
                 "claude-agent-acp" if self._is_claude
-                else "pi-acp-server" if self._is_pi
+                else "pi-acp" if self._is_pi
                 else f"{KIRO_CLI_BIN} {KIRO_CLI_SUBCMD}"
             )
         )
@@ -2017,7 +2015,7 @@ class AcpClient:
             redacted, _ = redact_credentials(redacted)
             _bin_label = (
                 "claude-acp" if self._is_claude
-                else "pi-acp-server" if self._is_pi
+                else "pi-acp" if self._is_pi
                 else KIRO_CLI_BIN
             )
             logger.warning("%s stderr: %s", _bin_label, redacted)
