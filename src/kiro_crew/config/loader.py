@@ -5273,6 +5273,14 @@ class KiroCrewConfig:
                 mcp_gateway_overlay=_gw_overlay,
                 mcp_gateway_settings_mcp_json=_gw_settings,
                 mcp_gateway_socket=_gw_socket,
+                # Operator escape hatch: select an alternate ACP backend via
+                # env var without going through a companion package. Values:
+                # "pi" → packages/pi-acp-server/bin/pi-acp-server (in this repo),
+                # "claude" → claude-agent-acp (dormant seam, requires companion
+                # to register settings + MCP glue), "" → kiro-cli (default).
+                # See docs/system-specs/features/pi-acp-server.md for the
+                # companion edition that adds a ProviderRegistry override.
+                acp_backend=os.environ.get("KIROCREW_ACP_BACKEND", ""),
             )
 
         return _acp
