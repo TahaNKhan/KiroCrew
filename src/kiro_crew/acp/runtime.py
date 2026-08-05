@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -34,6 +35,7 @@ from kiro_crew.acp.client import (
     _get_start_time,
     _KiroExecutableTrustError,
     _resolve_kiro_bin_for_spawn,
+    PROTOCOL_VERSION_CLAUDE,
 )
 from kiro_crew.acp.session_handle import (
     AcpRuntimeDead,
@@ -42,6 +44,8 @@ from kiro_crew.acp.session_handle import (
     AcpSessionHandle,
 )
 from kiro_crew.acp.types import (
+    ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_PI,
     ACP_CLIENT_CAPABILITIES,
     METHOD_MCP_OAUTH_REQUEST,
     METHOD_SESSION_LOAD,
@@ -351,6 +355,7 @@ class AcpRuntime:
         max_age_secs: float = _DEFAULT_MAX_AGE_SECS,
         max_rss_mb: float = _DEFAULT_MAX_RSS_MB,
         model: str | None = None,
+        acp_backend: str = "",
     ):
         if work_dir:
             self._work_dir = Path(work_dir)
@@ -361,6 +366,14 @@ class AcpRuntime:
 
             self._work_dir = config_dir() / "workspace"
         self._agent = agent
+        # Operator escape hatch: route the multiplexed runtime to an alternate
+        # ACP backend. Values: "" (default kiro-cli), "pi" (upstream pi-acp),
+        # "claude" (claude-agent-acp dormant seam). Mirrors AcpClient's
+        # acp_backend kwarg — the same env var KIROCREW_ACP_BACKEND drives
+        # both. When the runtime is in pi/claude mode it falls back to
+        # one-process-per-session (not session-sharing eligible), which is
+        # the documented limitation for those backends.
+        self._acp_backend = acp_backend
         if model is not None:
             if not MODEL_ID_RE.match(model):
                 raise ValueError(
@@ -525,7 +538,36 @@ class AcpRuntime:
         if not kiro_bin:
             raise AcpRuntimeError(f"{KIRO_CLI_BIN} not found in PATH")
 
-        argv: list[str] = [kiro_bin, KIRO_CLI_SUBCMD, "--agent", self._agent]
+        # Backend dispatch: default kiro-cli; pi routes to upstream pi-acp
+        # (svkozak/pi-acp); claude routes to claude-agent-acp (dormant seam).
+        # Mirrors AcpClient._spawn — same KIROCREW_ACP_BACKEND env var drives
+        # both single-session and multiplexed paths.
+        if self._acp_backend == ACP_BACKEND_PI:
+            pi_bin = os.environ.get("PI_ACP_SERVER_BIN")
+            if not pi_bin:
+                pi_bin = shutil.which("pi-acp")
+            if not pi_bin:
+                raise AcpRuntimeError(
+                    "pi-acp not found. Install it with `npm i -g pi-acp`, "
+                    "or set PI_ACP_SERVER_BIN to its absolute path."
+                )
+            argv: list[str] = [pi_bin]
+        elif self._acp_backend == ACP_BACKEND_CLAUDE:
+            # Dormant seam: the single-session AcpClient branch handles the
+            # real setup (binary resolution, env wiring). The multiplexed path
+            # only fires if a companion re-registered the backend and gave us
+            # an explicit binary via env — we mirror that here so the runtime
+            # doesn't hard-fail when the seam is dormant.
+            claude_bin = os.environ.get("CLAUDE_AGENT_ACP_BIN")
+            if not claude_bin:
+                raise AcpRuntimeError(
+                    "claude-agent-acp binary not configured. The claude "
+                    "backend is a dormant seam — only a companion edition "
+                    "that has re-registered it can drive this path."
+                )
+            argv: list[str] = [claude_bin]
+        else:
+            argv: list[str] = [kiro_bin, KIRO_CLI_SUBCMD, "--agent", self._agent]
         if self._model:
             # Pin the model at process start (mirrors `kiro-cli chat --model X`).
             # This is the ONLY reliable way to run a non-default provider model
@@ -636,7 +678,15 @@ class AcpRuntime:
                 {
                     "clientName": CLIENT_NAME,
                     "clientVersion": CLIENT_VERSION,
-                    "protocolVersion": PROTOCOL_VERSION,
+                    # Integer protocol version (1) for pi-acp / claude-agent-acp;
+                    # kiro-cli uses the date-stamped "2025-08-22". Mirrors
+                    # AcpClient._initialize_session — the same KIROCREW_ACP_BACKEND
+                    # drives both single-session and multiplexed paths.
+                    "protocolVersion": (
+                        PROTOCOL_VERSION_CLAUDE
+                        if self._acp_backend in (ACP_BACKEND_PI, ACP_BACKEND_CLAUDE)
+                        else PROTOCOL_VERSION
+                    ),
                     "clientCapabilities": ACP_CLIENT_CAPABILITIES,
                 },
             )
@@ -955,7 +1005,13 @@ class AcpRuntime:
         Lets callers translate a runtime death into AcpAuthRequired (an
         actionable login prompt) instead of a generic process-death error —
         parity with AcpClient, which inspects stderr the same way.
+
+        Backend-specific: this only applies to kiro-cli. pi-acp and
+        claude-agent-acp authenticate against their own providers and never
+        emit this stderr pattern; for them this check is always False.
         """
+        if self._acp_backend in (ACP_BACKEND_PI, ACP_BACKEND_CLAUDE):
+            return False
         return any(_NOT_LOGGED_IN_RE.search(line) for line in self._stderr_lines)
 
     def _mark_dead(self, reason: str) -> None:
@@ -1227,7 +1283,7 @@ class AcpRuntime:
         # plain local unregister would leak it in the shared process. terminate_
         # session also unregisters the queue. Mirrors the same cleanup in
         # load_session().
-        if agent:
+        if agent and self._acp_backend not in (ACP_BACKEND_PI, ACP_BACKEND_CLAUDE):
             try:
                 await self._send_and_await(
                     METHOD_SET_MODE,
@@ -1314,7 +1370,7 @@ class AcpRuntime:
         # succeeded so kiro-cli holds it; a plain local unregister would leak it
         # in the shared process (and leave the reader routing late transcript-
         # replay frames to an abandoned queue). terminate_session unregisters too.
-        if agent:
+        if agent and self._acp_backend not in (ACP_BACKEND_PI, ACP_BACKEND_CLAUDE):
             try:
                 await self._send_and_await(
                     METHOD_SET_MODE,
