@@ -9,12 +9,12 @@
 // Maps to build spec §2 (Protocol contract) + §2.7 (unknown → -32601).
 import type { Readable, Writable } from "node:stream";
 import { Transport } from "./transport.js";
-import { registerOn as regInit } from "./handlers/initialize";
-import { registerOn as regNew } from "./handlers/session-new";
-import { registerOn as regMode } from "./handlers/session-mode";
-import { registerOn as regModel } from "./handlers/session-model";
-import { handleSessionPrompt, type PiSessionLike } from "./handlers/session-prompt";
-import { handleCancel } from "./handlers/cancel";
+import { registerOn as regInit } from "./handlers/initialize.js";
+import { registerOn as regNew } from "./handlers/session-new.js";
+import { registerOn as regMode } from "./handlers/session-mode.js";
+import { registerOn as regModel } from "./handlers/session-model.js";
+import { handleSessionPrompt, type PiSessionLike } from "./handlers/session-prompt.js";
+import { handleCancel } from "./handlers/cancel.js";
 import { type HandlerContext } from "./handlers/context.js";
 
 const KNOWN_METHODS = new Set([

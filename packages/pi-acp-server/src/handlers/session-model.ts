@@ -7,8 +7,8 @@
 // `configId === "model"` is wired (the only option the server advertises in
 // initialize). Other configIds are ignored so a future configOption addition
 // doesn't silently trigger model changes.
-import type { TransportLike } from "../transport-like";
-import { type HandlerContext, respond } from "./context";
+import type { TransportLike } from "../transport-like.js";
+import { type HandlerContext, respond } from "./context.js";
 
 export function handle(params: unknown, ctx: HandlerContext): unknown {
 	const p = (params ?? {}) as { modelId?: unknown };

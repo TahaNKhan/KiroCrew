@@ -4,8 +4,8 @@
 // raises at client.py:2386 if missing). ctx.createSessionId() backs this with
 // crypto.randomUUID() in server.ts; we don't call crypto here so tests can
 // pin the id deterministically.
-import type { TransportLike } from "../transport-like";
-import { type HandlerContext, respond } from "./context";
+import type { TransportLike } from "../transport-like.js";
+import { type HandlerContext, respond } from "./context.js";
 
 export function handle(_params: unknown, ctx: HandlerContext): unknown {
 	const sessionId = ctx.createSessionId();

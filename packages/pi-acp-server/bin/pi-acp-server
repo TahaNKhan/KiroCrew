@@ -1,5 +1,15 @@
 #!/usr/bin/env node
-// Entry point for the pi-acp-server CLI. Wires up by `src/server.ts` (T08).
-// Until T08 lands, importing a non-existent module is fine — `bin/` is
-// only invoked by a parent that has already run `npm run build`.
-import("./dist/server.js");
+// Entry point for the pi-acp-server CLI. Calls `startServer()` from
+// src/server.ts with the default process.stdin/stdout. A real pi
+// integration would inject its own PiSessionLike via startServer({piSession}).
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const serverModule = join(here, "..", "dist", "src", "server.js");
+
+const m = await import(serverModule);
+await m.startServer().catch((err) => {
+	process.stderr.write(`[pi-acp-server] fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+	process.exit(1);
+});
