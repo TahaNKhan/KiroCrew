@@ -32,6 +32,14 @@ Three layers sit beneath Kiro Crew, and the distinction matters:
 Kiro Crew is **KiroACP-only**: `agent.provider` is fixed to `acp`, and kiro-cli is
 a hard requirement.
 
+The `acp` provider is **backend-agnostic** — it speaks JSON-RPC 2.0 over stdio to
+any process that implements the Agent Client Protocol. KiroCrew ships a runtime
+backend (`kiro-cli acp --agent <name>`) and a dormant Claude backend seam
+(`claude-agent-acp`); a companion package can register additional backends via
+the `ProviderRegistry.register_acp_backends` seam without forking the client.
+See [`../../system-specs/features/pi-acp-server.md`](../../system-specs/features/pi-acp-server.md)
+for a third-backend adapter pattern.
+
 | Capability | kiro-cli alone | With Kiro Crew |
 |---|---|---|
 | Sessions | One per terminal | Many concurrent (channel threads, dashboard slots, cron jobs, subagents, task steps) |

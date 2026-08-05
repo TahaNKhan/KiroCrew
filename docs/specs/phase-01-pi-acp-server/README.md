@@ -1,6 +1,7 @@
 # Phase 01 — pi-acp-server
 
-**Status:** planning
+**Status:** done
+**Done:** 2026-08-04
 **Branch:** `main` (direct, per user)
 **Push policy:** after each gate
 **Source spec:** [`../../system-specs/features/pi-acp-server.md`](../../system-specs/features/pi-acp-server.md)
