@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// Entry point for the pi-acp-server CLI. Wires up by `src/server.ts` (T08).
+// Until T08 lands, importing a non-existent module is fine — `bin/` is
+// only invoked by a parent that has already run `npm run build`.
+import("./dist/server.js");
