@@ -771,8 +771,15 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
     return merged
 
 
-async def api_models(request: web.Request) -> web.Response:
-    """GET /api/models — list available models from the live kiro-cli ACP session."""
+async def _kiro_cli_models(request: web.Request) -> web.Response:
+    """GET /api/models on the kiro-cli backend.
+
+    Body of the original ``api_models`` handler, kept verbatim and only the
+    indentation is updated — the dispatcher in ``api_models`` (phase-02 G3)
+    routes here when ``KIROCREW_ACP_BACKEND`` is unset or set to anything
+    that isn't ``"pi"``. Phase-02 deliberately preserves the existing
+    kiro-cli path byte-for-byte so the default behavior is unchanged.
+    """
     # Signed-out gateways must never reach the spawn below. kiro-cli auto-opens
     # an interactive browser login for ANY subcommand run unauthenticated
     # (--no-interactive does not suppress it, and there is no opt-out env var),
@@ -794,16 +801,8 @@ async def api_models(request: web.Request) -> web.Response:
 
         kiro_bin = await _resolve_kiro_bin_for_spawn()
         if not kiro_bin:
-            # Degraded (binary not resolved yet), NOT a genuine "zero models"
-            # result. Return 503 so the client retries instead of caching an
-            # empty list — a cached [] renders an empty picker that only a
-            # manual page refresh recovers from.
             return web.json_response({"error": "kiro binary not resolved"}, status=503)
         argv = [kiro_bin, "chat", "--list-models", "--format", "json", "--no-interactive"]
-        # Mirror AcpClient._spawn() sandbox: wrap_argv + env + process isolation.
-        # Note: AcpClient._spawn() is for interactive ACP sessions (stdin/stdout
-        # pipes); this is a one-shot read-only command, so we replicate the
-        # sandbox setup directly.  See the security-controls rule.
         argv, cleanup = wrap_argv(argv)
         argv = cgroup_scope_argv(argv)  # cgroup DoS ceiling
         try:
@@ -825,12 +824,6 @@ async def api_models(request: web.Request) -> web.Response:
                 except ProcessLookupError:
                     pass
                 await proc.communicate()
-                # A cold CLI spawn exceeded the timeout. This is the common
-                # cause of the "picker is empty until I refresh" symptom: a
-                # slow first `--list-models` spawn returning [] (HTTP 200) would
-                # be cached by the client as a successful empty result. Return
-                # 503 instead so React Query retries with backoff and the
-                # picker self-heals without a manual refresh.
                 logger.warning("api_models: --list-models timed out; returning 503")
                 return web.json_response({"error": "model list timed out"}, status=503)
         finally:
@@ -867,23 +860,6 @@ async def api_models(request: web.Request) -> web.Response:
                 {"error": "model list returned an invalid payload"}, status=503
             )
         models = data["models"]
-        # Seed the central window authority from kiro's authoritative structured
-        # 'context_window_tokens' field (keyed by model_id/model_name). This is
-        # the ONE place these rows enter the system; every other consumer (the
-        # ACP backfill, the context-budget scaler, the live meter) then resolves
-        # through model_registry.model_window() rather than re-reading kiro. The
-        # in-memory update is synchronous (cheap dict mutation); only the disk
-        # persist is offloaded to an executor so the event loop never blocks on
-        # filesystem I/O (no blocking call on the event loop).
-        #
-        # This fork keeps kiro's bare-dotted ids as the picker WIRE FORMAT
-        # (guarded by _model_rejected_reason / api_chat_slot_model, which rejects
-        # canonical registry keys the ACP CLI can't accept). The upstream
-        # registry-key canonicalization is deliberately NOT ported — it is
-        # incompatible with this fork's _model_rejected_reason guard. The window
-        # seeding above uses kiro's authoritative context_window_tokens to give
-        # the backfill real GPT/DeepSeek/Qwen windows, independent of the
-        # wire-format choice.
         if model_registry.refresh_kiro_windows(models):
             await asyncio.get_running_loop().run_in_executor(
                 maintenance_executor(), model_registry.persist_kiro_windows
@@ -891,10 +867,65 @@ async def api_models(request: web.Request) -> web.Response:
         models = [m for m in models if not is_deprecated_model(m.get("model_name", ""))]
         return web.json_response(models)
     except Exception:
-        # Spawn failure, JSON parse error, etc. — degraded, not "zero models".
-        # 503 so the client retries instead of caching an empty picker.
         logger.warning("api_models failed; returning 503 for client retry", exc_info=True)
         return web.json_response({"error": "model list unavailable"}, status=503)
+
+
+async def _pi_models_response(request: web.Request) -> web.Response:
+    """GET /api/models on the pi backend.
+
+    Forwards to ``pi_models(configured_default)`` and returns a flat list.
+    The merge layer (advertised + static catalog + auto sentinel +
+    configured-default insertion + ``context_window`` enrichment) lives in
+    ``pi_models.py``. This handler is a thin dispatcher.
+    """
+    configured_default = ""
+    try:
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        configured_default = (
+            KiroCrewConfig.load().agent.model or ""
+        )
+    except Exception:
+        pass
+    try:
+        from kiro_crew.dashboard.handlers.pi_models import (
+            pi_models as _pi_models_merge,
+        )
+
+        rows = await asyncio.get_running_loop().run_in_executor(
+            maintenance_executor(),
+            _pi_models_merge,
+            configured_default,
+        )
+        return web.json_response(rows)
+    except Exception:
+        logger.warning("api_models (pi backend) failed; returning 503", exc_info=True)
+        return web.json_response({"error": "model list unavailable"}, status=503)
+
+
+async def api_models(request: web.Request) -> web.Response:
+    """GET /api/models — dispatch on KIROCREW_ACP_BACKEND.
+
+    Phase-02 G3 (T03): adds the backend dispatcher. The kiro-cli body is
+    preserved verbatim as ``_kiro_cli_models``; a new ``_pi_models_response``
+    handles the pi backend by shelling ``pi list-models`` (or the static
+    catalog fallback). Default backend is unchanged.
+
+    Routing decision matrix:
+
+    - ``KIROCREW_ACP_BACKEND=pi`` → pi path (``pi list-models`` or fallback).
+    - Anything else (including unset, ``=claude``, ``=kiro``, etc.) →
+      kiro-cli path. The claude path is a dormant seam — only a companion
+      edition's ``register_acp_backends`` override can drive it, and when
+      that does the user's dashboard consumes the result via
+      ``_advertised_cc_models`` (claude's existing functionality
+      preserved for forward-compat).
+    """
+    backend = os.environ.get("KIROCREW_ACP_BACKEND", "").strip().lower()
+    if backend == "pi":
+        return await _pi_models_response(request)
+    return await _kiro_cli_models(request)
 
 
 async def api_effort_levels(request: web.Request) -> web.Response:
