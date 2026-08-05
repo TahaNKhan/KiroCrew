@@ -4,7 +4,7 @@
 // runtime (server.ts wires this from the AgentSession + permission gate) owns
 // the rest. Keeping the surface small makes per-handler tests trivial — every
 // test substitutes a FakeContext with setModel spy.
-import type { TransportLike } from "../transport-like";
+import type { TransportLike } from "../transport-like.js";
 
 export interface HandlerContext {
 	/** Update the model the server advertises + hands to pi. */

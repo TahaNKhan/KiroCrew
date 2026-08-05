@@ -6,8 +6,8 @@
 // `modes` array feeds only the dashboard's agent dropdown — single synthetic
 // entry is enough. `configOptions` advertises the `model` selector; T06 will
 // expand the option list as models are wired.
-import type { TransportLike } from "../transport-like";
-import { type HandlerContext, respond } from "./context";
+import type { TransportLike } from "../transport-like.js";
+import { type HandlerContext, respond } from "./context.js";
 
 export function handle(_params: unknown, _ctx: HandlerContext): unknown {
 	return {

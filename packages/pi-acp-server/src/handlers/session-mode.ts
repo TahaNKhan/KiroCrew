@@ -3,8 +3,8 @@
 // Per build spec §2.3: no-op. KiroCrew's claude backend skips set_mode
 // entirely (client.py:2400) and pi does the same conceptually. Accept the
 // request and respond `{}` so the client doesn't hang on a missing reply.
-import type { TransportLike } from "../transport-like";
-import { type HandlerContext, respond } from "./context";
+import type { TransportLike } from "../transport-like.js";
+import { type HandlerContext, respond } from "./context.js";
 
 export function handle(_params: unknown, _ctx: HandlerContext): unknown {
 	return {};
