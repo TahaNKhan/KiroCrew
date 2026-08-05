@@ -1018,6 +1018,12 @@ class SessionManager:
                     runtime = AcpRuntime(
                         agent="kirocrew-lite",
                         sandbox_mode=getattr(self._cfg.agent, "sandbox", "auto"),
+                        # Honor KIROCREW_ACP_BACKEND in the background session too
+                        # (chat titles, suggestions, tips, model picker all flow
+                        # through here). Without this the bg runtime always
+                        # spawns kiro-cli and fails with 'not logged in' even
+                        # when the parent chat is on pi-acp.
+                        acp_backend=os.environ.get("KIROCREW_ACP_BACKEND", ""),
                     )
                     await runtime.spawn()
                     self._bg_runtime = runtime
@@ -1418,6 +1424,13 @@ class SessionManager:
             val = getattr(client, attr, None)
             if val is not None:
                 kwargs[key] = val
+        # Honor the same backend selection as the parent (mirrors AcpProvider's
+        # _start_kiro_runtime_impl). For pi/claude this means companion
+        # runtimes also spawn the alternate ACP subprocess — the bg session
+        # and subagent runtimes see the same model + protocol as the parent.
+        acp_backend_val = getattr(client, "_acp_backend", "") or ""
+        if acp_backend_val:
+            kwargs["acp_backend"] = acp_backend_val
         return kwargs
 
     def is_session_sharing_eligible(self, parent_session_key: str) -> bool:
