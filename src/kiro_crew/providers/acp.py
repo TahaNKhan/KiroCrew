@@ -315,15 +315,33 @@ class AcpProvider(LLMProvider):
         return self._client.backend == ACP_BACKEND_CLAUDE
 
     @property
+    def _is_pi(self) -> bool:
+        """True when this ACP provider talks to pi-acp (vs kiro-cli or claude).
+
+        Pi-acp is also one-process-per-session like claude — it does not
+        support multiplexed sessions. Used by ``is_session_sharing_eligible``
+        and any future per-backend dispatch that needs to single out pi.
+        """
+        return getattr(self._client, "_is_pi", False)
+
+    @property
     def is_session_sharing_eligible(self) -> bool:
         """True when this provider can host multiplexed subagent sessions.
 
         Session sharing requires the kiro-cli backend (which supports N
         concurrent sessions per process via AcpRuntime demux). The Claude
-        Code backend uses AcpClient (one process per session) and is never
-        eligible, so subagents fall back to the legacy per-process path.
+        Code backend AND the pi backend both use AcpClient (one process
+        per session) and are never eligible — subagents fall back to the
+        legacy per-process path (one pi-acp subprocess per subagent).
+
+        Phase-03 fix: this previously only excluded claude (``not
+        is_claude_backend``), so pi returned True and subagent spawning
+        under pi silently tried to multiplex onto a single pi-acp process
+        — which doesn't work. Now pi is excluded alongside claude.
         """
-        return not self.is_claude_backend
+        if self.is_claude_backend or self._is_pi:
+            return False
+        return True
 
     async def _start_kiro_runtime(self) -> None:
         """Spawn an AcpRuntime + session; time the kiro cold-start split.
