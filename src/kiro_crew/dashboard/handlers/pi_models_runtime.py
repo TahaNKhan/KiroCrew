@@ -4,9 +4,11 @@ Pure runtime: shells ``pi list-models`` in the same sandbox posture as the
 existing kiro-cli path in ``agents.py:api_models``, parses the markdown
 output, and returns rows enriched with ``context_window``.
 
-T05 owns this file; T01 owns the pure markdown parser and may re-export
-``parse_pi_list_models`` from this file once both land. Both files live
-under ``pi_models`` so a single dispatcher (T03) can wire them together.
+This module owns the subprocess shell + sandbox; the canonical
+markdown parser (``parse_pi_list_models``) lives in
+``pi_models_runtime``'s sibling module ``pi_models.py`` (T01) and is
+re-exported here so ``test/test_pi_models_runtime.py`` — which T05 owns —
+keeps its existing import path.
 
 Per the phase-02 design doc:
 - All failure modes return ``[]`` (degraded, never raise).
@@ -25,8 +27,12 @@ import subprocess
 from typing import Any
 
 from kiro_crew import model_registry
+from kiro_crew.dashboard.handlers.pi_models import parse_pi_list_models
 from kiro_crew.env import augmented_path
 from kiro_crew.sandbox import cgroup_scope_argv, create_subprocess_limited, wrap_argv
+
+# Re-exported so the existing test module's imports keep working.
+__all__ = ["parse_pi_list_models", "advertised_pi_models"]
 
 logger = logging.getLogger(__name__)
 
@@ -37,60 +43,6 @@ _STDERR_TAIL_CHARS = 1000
 
 # Per-shell timeout, also matches the kiro-cli path (10s — see agents.py).
 _SUBPROCESS_TIMEOUT_SECS = 10.0
-
-# Markdown grammar — see phase-02 design doc.
-# Provider header: ``**Provider**`` on its own line.
-# Model line: ``- `model-id` [(current) | *(thinking)*]``.
-_PROVIDER_HEADER_RE = re.compile(r"^\*\*(?P<provider>[^*]+)\*\*$")
-_MODEL_LINE_RE = re.compile(r"^- `(?P<id>[^`]+)`(?:\s*(?P<suffix>.*))?$")
-
-
-def parse_pi_list_models(text: str) -> list[dict]:
-    """Parse ``pi list-models`` markdown into the API row shape.
-
-    Robust to extra whitespace, blank lines, and trailing footer text
-    (``Use Ctrl+P`` prose or ``\\`\\`\\`bash … \\`\\`\\``` code fence).
-    Returns rows in the order pi listed them; the merge layer sorts by
-    canonical key.
-
-    Returned rows: ``{model_name, display_name, description}``. No
-    ``context_window`` — the caller enriches via the central authority
-    (model_registry.model_window or REFERENCE_WINDOW_TOKENS fallback).
-    """
-    provider: str | None = None
-    rows: list[dict] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        m_header = _PROVIDER_HEADER_RE.match(line)
-        if m_header:
-            provider = m_header.group("provider").strip()
-            continue
-        # Trailing footer (markdown code fence or "Use Ctrl+P" prose) — neither
-        # is a provider header, but a `bash`-fenced code block would otherwise
-        # dump into a row. Stop the parse at the first fence so subsequent
-        # prose never becomes model rows.
-        if line.startswith("```"):
-            break
-        m_row = _MODEL_LINE_RE.match(line)
-        if not m_row:
-            continue
-        model_id = m_row.group("id")
-        suffix = (m_row.group("suffix") or "").strip()
-        description_parts: list[str] = []
-        if "current" in suffix:
-            description_parts.append("Active model")
-        if "thinking" in suffix:
-            description_parts.append("Thinking")
-        if provider:
-            description_parts.append(f"via {provider}")
-        rows.append({
-            "model_name": model_id,
-            "display_name": model_id,
-            "description": " · ".join(description_parts),
-        })
-    return rows
 
 
 def _enrich_with_context_window(row: dict) -> dict:
