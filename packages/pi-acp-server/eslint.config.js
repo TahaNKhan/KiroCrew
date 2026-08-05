@@ -16,5 +16,18 @@ export default [
 			ecmaVersion: 2022,
 			sourceType: "module",
 		},
+		rules: {
+			// Convention: leading-underscore params are intentional (signals
+			// "intentionally unused, retained for shape/interface"). tseslint
+			// doesn't honor the prefix by default — opt in.
+			"@typescript-eslint/no-unused-vars": [
+				"error",
+				{
+					argsIgnorePattern: "^_",
+					varsIgnorePattern: "^_",
+					caughtErrorsIgnorePattern: "^_",
+				},
+			],
+		},
 	},
 ];
