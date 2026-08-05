@@ -1821,21 +1821,28 @@ class AcpClient:
                 )
             argv: list[str] = claude_argv
         elif self._is_pi:
-            # Pi backend: env-var → PATH lookup for `pi-acp-server`. The script
-            # is a thin shebang wrapper; we resolve it on the host path and
-            # exec it directly. Mirrors the dormant claude seam (see _spawn
+            # Pi backend: spawn the upstream `pi-acp` adapter (svkozak/pi-acp,
+            # MIT, npm: `npm i -g pi-acp`). It wraps `pi --mode rpc` and
+            # implements the full ACP protocol surface (session/prompt with
+            # streaming, session/load, slash commands, tool calls with
+            # location/diff metadata). Resolution order:
+            #   1. PI_ACP_SERVER_BIN env var (explicit override)
+            #   2. `pi-acp` on PATH (the canonical binary from the npm package)
+            # The local `packages/pi-acp-server/` shim from phase-01 is no
+            # longer used — it was a placeholder until upstream `pi-acp` was
+            # discovered. Mirrors the dormant claude seam (see _spawn
             # docstring) but is intentionally simpler — no native binary
-            # lookup, no settings seed, no MCP registry dance.
+            # lookup, no settings seed.
             pi_bin = os.environ.get("PI_ACP_SERVER_BIN")
             if not pi_bin:
-                pi_bin = shutil.which("pi-acp-server") or shutil.which(
+                pi_bin = shutil.which("pi-acp") or shutil.which(
                     "packages/pi-acp-server/bin/pi-acp-server"
                 )
             if not pi_bin:
                 raise AcpError(
-                    "pi-acp-server not found. Set PI_ACP_SERVER_BIN to its "
-                    "path, or install the package (cd packages/pi-acp-server "
-                    "&& npm install && npm run build && npm link)."
+                    "pi-acp not found. Install it with `npm i -g pi-acp` "
+                    "(https://www.npmjs.com/package/pi-acp), or set "
+                    "PI_ACP_SERVER_BIN to its absolute path."
                 )
             argv = [pi_bin]
         else:

@@ -5275,7 +5275,8 @@ class KiroCrewConfig:
                 mcp_gateway_socket=_gw_socket,
                 # Operator escape hatch: select an alternate ACP backend via
                 # env var without going through a companion package. Values:
-                # "pi" → packages/pi-acp-server/bin/pi-acp-server (in this repo),
+                # "pi" → upstream pi-acp adapter (npm i -g pi-acp), bridges
+                # `pi --mode rpc` to ACP JSON-RPC over stdio (svkozak/pi-acp).
                 # "claude" → claude-agent-acp (dormant seam, requires companion
                 # to register settings + MCP glue), "" → kiro-cli (default).
                 # See docs/system-specs/features/pi-acp-server.md for the
