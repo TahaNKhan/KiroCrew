@@ -534,6 +534,7 @@ class AcpProvider(LLMProvider):
         # would silently run on the agent's default.
         configured_model = getattr(self._client, "_model", "") or ""
 
+        _acp_backend_val = getattr(self._client, "_acp_backend", "")
         runtime = AcpRuntime(
             work_dir=work_dir,
             agent=agent or "kirocrew",
@@ -542,6 +543,14 @@ class AcpProvider(LLMProvider):
             mcp_gateway_overlay=mcp_gateway_overlay,
             mcp_gateway_settings_mcp_json=mcp_gateway_settings_mcp_json,
             mcp_gateway_socket=mcp_gateway_socket,
+            # Honor the same acp_backend as the underlying client so the
+            # multiplexed runtime spawns pi-acp / claude-agent-acp instead
+            # of kiro-cli when KIROCREW_ACP_BACKEND is set.
+            acp_backend=_acp_backend_val,
+        )
+        logger.debug(
+            "AcpProvider starting runtime: acp_backend=%r",
+            _acp_backend_val,
         )
         _t_spawn = time.monotonic()
         try:
@@ -632,6 +641,7 @@ class AcpProvider(LLMProvider):
                         mcp_gateway_overlay=mcp_gateway_overlay,
                         mcp_gateway_settings_mcp_json=mcp_gateway_settings_mcp_json,
                         mcp_gateway_socket=mcp_gateway_socket,
+                        acp_backend=getattr(self._client, "_acp_backend", ""),
                     )
                     try:
                         await runtime.spawn()

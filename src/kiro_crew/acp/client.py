@@ -44,6 +44,7 @@ from kiro_crew.acp.liveness import VERDICT_UNKNOWN, VERDICT_WORKING, LivenessOra
 from kiro_crew.acp.prompt_blocks import build_prompt_blocks
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_PI,
     ACP_CLIENT_CAPABILITIES,
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
@@ -1509,6 +1510,15 @@ class AcpClient:
     def _is_claude(self) -> bool:
         return self.backend == ACP_BACKEND_CLAUDE
 
+    @property
+    def _is_pi(self) -> bool:
+        return self.backend == ACP_BACKEND_PI
+
+    @property
+    def _is_alt_backend(self) -> bool:
+        """True for any non-kiro-cli backend (claude or pi)."""
+        return self._is_claude or self._is_pi
+
     def _pooled_mcp_servers(self) -> list[dict[str, Any]]:
         """Broker-stub ``mcpServers`` entries for this session's ``session/new``.
 
@@ -1810,6 +1820,29 @@ class AcpClient:
                     f"script."
                 )
             argv: list[str] = claude_argv
+        elif self._is_pi:
+            # Pi backend: spawn the upstream `pi-acp` adapter (svkozak/pi-acp,
+            # MIT, npm: `npm i -g pi-acp`). It wraps `pi --mode rpc` and
+            # implements the full ACP protocol surface (session/prompt with
+            # streaming, session/load, slash commands, tool calls with
+            # location/diff metadata). Resolution order:
+            #   1. PI_ACP_SERVER_BIN env var (explicit override)
+            #   2. `pi-acp` on PATH (the canonical binary from the npm package)
+            # The homegrown packages/pi-acp-server/ shim from phase-01 was a
+            # placeholder before upstream was discovered and has been
+            # deleted; this branch only knows about pi-acp. Mirrors the
+            # dormant claude seam (see _spawn docstring) but is intentionally
+            # simpler — no native binary lookup, no settings seed.
+            pi_bin = os.environ.get("PI_ACP_SERVER_BIN")
+            if not pi_bin:
+                pi_bin = shutil.which("pi-acp")
+            if not pi_bin:
+                raise AcpError(
+                    "pi-acp not found. Install it with `npm i -g pi-acp` "
+                    "(https://www.npmjs.com/package/pi-acp), or set "
+                    "PI_ACP_SERVER_BIN to its absolute path."
+                )
+            argv = [pi_bin]
         else:
             try:
                 kiro_bin = await _resolve_kiro_bin_for_spawn()
@@ -1826,7 +1859,7 @@ class AcpClient:
             argv,
             mode=self._sandbox_mode,
             strip_python_env=True,
-            is_kiro_cli=not self._is_claude,
+            is_kiro_cli=(not self._is_claude) and (not self._is_pi),
         )
         # cgroup v2 scope (OUTERMOST): bound this agent + all its MCP-server /
         # tool descendants with pids.max (fork bomb) + memory.max (RSS balloon).
@@ -1914,7 +1947,11 @@ class AcpClient:
             subprocess_executor(), _get_start_time, self._pid
         )
         _spawn_label = (
-            "claude-agent-acp" if self._is_claude else f"{KIRO_CLI_BIN} {KIRO_CLI_SUBCMD}"
+            (
+                "claude-agent-acp" if self._is_claude
+                else "pi-acp" if self._is_pi
+                else f"{KIRO_CLI_BIN} {KIRO_CLI_SUBCMD}"
+            )
         )
         logger.info("Spawned %s (PID %d)", _spawn_label, self._pid)
         # Track root PID and do an early descendant scan.  kiro-cli forks
@@ -1976,7 +2013,11 @@ class AcpClient:
             self._stderr_lines.append(text)
             redacted, _ = redact_exfiltration_urls(text)
             redacted, _ = redact_credentials(redacted)
-            _bin_label = "claude-acp" if self._is_claude else KIRO_CLI_BIN
+            _bin_label = (
+                "claude-acp" if self._is_claude
+                else "pi-acp" if self._is_pi
+                else KIRO_CLI_BIN
+            )
             logger.warning("%s stderr: %s", _bin_label, redacted)
         if suppressed:
             # Flush the residual count once the stream closes so the final burst
@@ -2265,7 +2306,7 @@ class AcpClient:
         """Handshake: initialize → session/load or session/new → set_mode → set_model."""
         # 1. Initialize
         protocol_version: int | str = (
-            PROTOCOL_VERSION_CLAUDE if self._is_claude else PROTOCOL_VERSION
+            PROTOCOL_VERSION_CLAUDE if self._is_alt_backend else PROTOCOL_VERSION
         )
         init_id = await self._send_request(
             METHOD_INITIALIZE,
@@ -2390,15 +2431,15 @@ class AcpClient:
 
         # Seek to end of JSONL so we only read new tool results.
         # claude-agent-acp stores sessions via its own SDK, not ~/.kiro/ — skip.
-        if self._session_id and not self._is_claude:
+        if self._session_id and not self._is_alt_backend:
             _jpath = kiro_sessions_dir() / f"{self._session_id}.jsonl"
             try:
                 self._jsonl_pos = _jpath.stat().st_size if _jpath.exists() else 0
             except OSError:
                 self._jsonl_pos = 0
 
-        # 4. Activate agent via set_mode (claude-agent-acp does not support set_mode — skip).
-        if not self._is_claude:
+        # 4. Activate agent via set_mode (claude + pi do not support set_mode — skip).
+        if not self._is_alt_backend:
             await self._send_request(
                 METHOD_SET_MODE,
                 {"sessionId": self._session_id, "modeId": self._agent},
@@ -2407,7 +2448,7 @@ class AcpClient:
 
         # 5. Set model — override if KiroCrew config specifies non-default.
         if self._model and self._model != DEFAULT_MODEL:
-            if self._is_claude:
+            if self._is_alt_backend:
                 await self.set_config_option("model", self._model)
             else:
                 await self._send_request(
